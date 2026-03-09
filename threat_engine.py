@@ -21,15 +21,40 @@ def get_heading(history):
     return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 
+def get_proximity_trend(history):
+    if len(history) < 10:  # Need enough data points for a stable trend
+        return "STABLE"
+
+    # Compare current distance vs distance 10 points ago
+    current_pos = history[-1]
+    past_pos = history[-10]
+
+    current_dist = get_distance(current_pos['lat'], current_pos['lng'])
+    past_dist = get_distance(past_pos['lat'], past_pos['lng'])
+
+    diff = current_dist - past_dist
+
+    if diff < -5: return "🔻 CLOSING"  # Distance is decreasing
+    if diff > 5:  return "🔹 RECEDING"  # Distance is increasing
+    return "↔️ HOVERING"
+
+
 def assess_risk(drone):
     pos = drone.get('droneData', {}).get('location', {})
     alt = drone.get('droneData', {}).get('altitudes', {}).get('agl', 0)
     pilot = drone.get('pilotData', {}).get('id')
     dist = get_distance(pos['lat'], pos['lng'])
 
+    # Tactical Trend
+    trend = get_proximity_trend(drone.get('history', []))
+
     # Classification Logic
+    reason = "None"
     if dist < 1000 and not pilot:
-        return "🔴 CRITICAL", dist
+        status, reason = "🔴 CRITICAL", "Unauthorized in Perimeter"
     elif dist < 2000 or alt > 120:
-        return "🟡 WARNING", dist
-    return "🟢 CLEAR", dist
+        status, reason = "🟡 WARNING", "Height/Proximity Violation"
+    else:
+        status, reason = "🟢 CLEAR", "Normal Ops"
+
+    return status, dist, trend, reason
