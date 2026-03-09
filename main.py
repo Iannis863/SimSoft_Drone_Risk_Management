@@ -21,17 +21,18 @@ def start_monitor():
                 drones = resp.json()
                 os.system('cls' if os.name == 'nt' else 'clear')  # Refresh screen
                 print(f"Active Drones: {len(drones)} | Refreshed: {time.strftime('%H:%M:%S')}")
-                print(f"{'ID':<10} | {'STATUS':<12} | {'DIST':<8} | {'HEADING':<8}")
+                print(f"{'ID':<10} | {'STATUS':<12} | {'DIST':<8} | {'TREND':<8} | {'HEADING':<8} | {'ALTITUDE':<8}")
                 print("-" * 50)
 
                 for d in drones:
-                    status, dist, trend, reason = assess_risk(d)
+                    status, dist, trend, reason, altitude = assess_risk(d)
+                    heading = get_heading(d.get('history', []))
 
                     # Log if it's not 'CLEAR'
                     if status != "🟢 CLEAR":
                         log_incident(d['id'], status, dist, trend, reason)
 
-                    print(f"{d['id']:<10} | {status:<12} | {trend:<12} | {int(dist)}m")
+                    print(f"{d['id']:<10} | {status:<12} | {int(dist)}m | {trend:<12} | {heading:<12} | {altitude:<8}")
 
             time.sleep(2)
     except KeyboardInterrupt:

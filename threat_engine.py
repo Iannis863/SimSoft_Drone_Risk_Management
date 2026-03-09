@@ -41,7 +41,13 @@ def get_proximity_trend(history):
 
 def assess_risk(drone):
     pos = drone.get('droneData', {}).get('location', {})
-    alt = drone.get('droneData', {}).get('altitudes', {}).get('agl', 0)
+
+    # SAFETY FIX: Use .get() with a default of 0 if altitudes or agl is missing/None
+    altitudes = drone.get('droneData', {}).get('altitudes') or {}
+    alt = altitudes.get('agl')
+    if alt is None:
+        alt = 0  # Default to 0 if the sensor is silent
+
     pilot = drone.get('pilotData', {}).get('id')
     dist = get_distance(pos['lat'], pos['lng'])
 
@@ -53,8 +59,8 @@ def assess_risk(drone):
     if dist < 1000 and not pilot:
         status, reason = "🔴 CRITICAL", "Unauthorized in Perimeter"
     elif dist < 2000 or alt > 120:
-        status, reason = "🟡 WARNING", "Height/Proximity Violation"
+        status, reason = "🟡 WARNING", f"Height({int(alt)}m)/Proximity Violation"
     else:
         status, reason = "🟢 CLEAR", "Normal Ops"
 
-    return status, dist, trend, reason
+    return status, dist, trend, reason, alt
