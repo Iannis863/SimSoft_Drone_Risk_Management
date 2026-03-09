@@ -64,6 +64,7 @@ def process_drones_for_ui():
             history = d.get('history', [])
             hdg = get_heading(history) if history else 0.0
 
+
             location = d.get('droneData', {}).get('location', {}) or {}
             pilot = d.get('pilotData', {}).get('id') or "Unknown"
 
