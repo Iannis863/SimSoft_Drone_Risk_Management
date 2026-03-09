@@ -3,6 +3,7 @@ import time
 import os
 from threat_engine import assess_risk, get_heading
 from config import SENSOR_URL, TOKEN_IANNIS
+import csv
 
 
 def start_monitor():
@@ -24,13 +25,26 @@ def start_monitor():
                 print("-" * 50)
 
                 for d in drones:
-                    status, dist = assess_risk(d)
-                    heading = get_heading(d.get('history', []))
-                    print(f"{d['id']:<10} | {status:<12} | {int(dist)}m | {int(heading)}°")
+                    status, dist, trend, reason = assess_risk(d)
+
+                    # Log if it's not 'CLEAR'
+                    if status != "🟢 CLEAR":
+                        log_incident(d['id'], status, dist, trend, reason)
+
+                    print(f"{d['id']:<10} | {status:<12} | {trend:<12} | {int(dist)}m")
 
             time.sleep(2)
     except KeyboardInterrupt:
         print("\nRadar shut down.")
+
+def log_incident(drone_id, status, dist, trend, reason):
+    file_exists = os.path.isfile('incidents.csv')
+    with open('incidents.csv', 'a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(['Timestamp', 'Drone_ID', 'Status', 'Distance', 'Trend', 'Reason'])
+
+        writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), drone_id, status, f"{int(dist)}m", trend, reason])
 
 
 if __name__ == "__main__":
