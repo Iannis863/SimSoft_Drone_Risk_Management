@@ -1,11 +1,11 @@
 import requests
-from config import AUTH_URL, EMAIL
+from config import AUTH_URL
 
 
-def get_access_token():
+def get_access_token(email):
     try:
         req = requests.post(f"{AUTH_URL}/auth/code/request",
-                            json={"email": EMAIL, "type": "login"})
+                            json={"email": email, "type": "login"})
         temp_token = req.json().get("token")
 
         print("\n" + "=" * 30)
@@ -24,3 +24,7 @@ def get_access_token():
     except Exception as e:
         print(f"Auth Error: {e}")
         return None
+
+if __name__ == "__main__":
+    email = input("Enter email: ")
+    verify = get_access_token(email)

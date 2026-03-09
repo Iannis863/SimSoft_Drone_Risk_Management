@@ -3,7 +3,8 @@ AUTH_URL = "https://authentication.stg.flux.aero"
 SENSOR_URL = "https://sensors.stg.flux.aero"
 
 # Credentials
-EMAIL = "hackathon3@flux.aero"
+EMAIL_IANNIS = "hackathon3@flux.aero"
+EMAIL_SEBI = "hackathon1@flux.aero"
 
 # Targets (Henri Coandă International Airport - OTP)
 AIRPORT_COORDS = (44.5722, 26.0841)
