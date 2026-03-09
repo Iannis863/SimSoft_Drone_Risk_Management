@@ -50,23 +50,19 @@ def start_monitor():
                 os.system('cls' if os.name == 'nt' else 'clear')
 
                 print(f"--- FLUX.AERO ROGUE DRONE RADAR | {time.strftime('%H:%M:%S')} ---")
-                print(f"{'SERIAL/ID':<15} | {'STATUS':<12} | {'DIST':<8} | {'TREND':<10} | {'HDG':<5} | {'ALT'}")
-                print("-" * 75)
+                print(f"{'ID':<10} | {'STATUS':<12} | {' DISTANCE TO ZONE':<10} | {'CLOSEST ZONE':<20}")
+                print("-" * 65)
 
                 current_loop_serials = []
 
                 for d in drones:
-                    status, dist, trend, reason, alt = assess_risk(d)
+                    status, dist, trend, heading, alt, reason, zone_name = assess_risk(d)
 
                     # Filter for local sector (50km)
                     if dist < 50000:
                         # Anchor to Serial, then TrackId, then ID
                         sn = d.get('serial') or d.get('trackId') or d.get('id')
                         current_loop_serials.append(sn)
-
-                        # Heading Calculation
-                        history = d.get('history', [])
-                        hdg = get_heading(history) if history else 0.0
 
                         # Mission Tracking Logic
                         if sn not in active_missions:
@@ -82,8 +78,7 @@ def start_monitor():
                             log_incident(sn, status, dist, trend, reason)
 
                         # Console Display
-                        print(
-                            f"{str(sn)[:15]:<15} | {status:<12} | {int(dist):<6}m | {trend:<10} | {int(hdg):<3}° | {alt}m")
+                        print(f"{str(sn)[:15]:<15} | {status:<12} | {int(dist):<6}m | {trend:<10} | {int(heading):<3}° | {alt}m")
 
                 # Check for Landings/Exits
                 for sn in list(active_missions.keys()):

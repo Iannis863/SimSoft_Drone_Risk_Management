@@ -1,2 +1,7 @@
 
 requests
+pandas
+streamlit
+folium
+streamlit-folium
+shapely

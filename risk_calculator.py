@@ -1,6 +1,9 @@
 import math
+
+from airspace_manager import AirspaceManager
 from config import AIRPORT_COORDS, MAX_SAFE_ALTITUDE
 
+airspace = AirspaceManager()
 
 def get_distance(lat1, lon1):
     lat2, lon2 = AIRPORT_COORDS
@@ -45,31 +48,24 @@ def get_proximity_trend(history, current_alt):
 
 def assess_risk(drone):
     pos = drone.get('droneData', {}).get('location', {})
+    lat, lng = pos.get('lat'), pos.get('lng')
+    alt = drone.get('droneData', {}).get('altitudes', {}).get('agl', 0) or 0
 
-    # SAFETY FIX: Use .get() with a default of 0 if altitudes or agl is missing/None
-    altitudes = drone.get('droneData', {}).get('altitudes') or {}
-    alt = altitudes.get('agl')
-    if alt is None:
-        alt = 0  # Default to 0 if the sensor is silent
-    alt = max(alt, 0)
+    dist_to_zone, zone_name = airspace.get_distance_to_closest_zone(lat, lng)
 
-    pilot = drone.get('pilotData', {}).get('id')
-    dist = get_distance(pos['lat'], pos['lng'])
-
-    # Tactical Trend
-    trend = get_proximity_trend(drone.get('history', []), alt)
-
-    # Classification Logic
     reason = "None"
-    if dist < 1000 and not pilot:
-        status, reason = "🔴 CRITICAL", "Unauthorized in Perimeter"
-    elif dist < 2000 or alt > MAX_SAFE_ALTITUDE:
-        status = "🟡 WARNING"
-        if alt > MAX_SAFE_ALTITUDE:
-            reason = f"Altitude Violation ({int(alt)}m > {MAX_SAFE_ALTITUDE}m)"
-        else:
-            reason = "Perimeter Proximity Violation"
+
+    if dist_to_zone == 0:
+        status, reason = "🔴 CRITICAL", f"BREACH: {zone_name}"
+    elif dist_to_zone < 500:
+        status, reason = "🟡 WARNING", f"Near {zone_name}"
+    elif alt > 60:
+        status, reason = "🟡 WARNING", "Altitude Violation"
     else:
         status, reason = "🟢 CLEAR", "Normal Ops"
 
-    return status, dist, trend, reason, alt
+    history = drone.get('history', [])
+    trend = get_proximity_trend(history, alt)
+    heading = get_heading(history)
+
+    return status, dist_to_zone, trend, heading, alt, reason, zone_name
