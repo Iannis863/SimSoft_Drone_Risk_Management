@@ -1,5 +1,6 @@
 import math
-from config import AIRPORT_COORDS
+from config import AIRPORT_COORDS, MAX_SAFE_ALTITUDE
+
 
 def get_distance(lat1, lon1):
     lat2, lon2 = AIRPORT_COORDS
@@ -21,7 +22,10 @@ def get_heading(history):
     return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 
-def get_proximity_trend(history):
+def get_proximity_trend(history, current_alt):
+    if current_alt <= 0:
+        return "🛑 STATIONARY"
+
     if len(history) < 10:  # Need enough data points for a stable trend
         return "STABLE"
 
@@ -47,19 +51,24 @@ def assess_risk(drone):
     alt = altitudes.get('agl')
     if alt is None:
         alt = 0  # Default to 0 if the sensor is silent
+    alt = max(alt, 0)
 
     pilot = drone.get('pilotData', {}).get('id')
     dist = get_distance(pos['lat'], pos['lng'])
 
     # Tactical Trend
-    trend = get_proximity_trend(drone.get('history', []))
+    trend = get_proximity_trend(drone.get('history', []), alt)
 
     # Classification Logic
     reason = "None"
     if dist < 1000 and not pilot:
         status, reason = "🔴 CRITICAL", "Unauthorized in Perimeter"
-    elif dist < 2000 or alt > 120:
-        status, reason = "🟡 WARNING", f"Height({int(alt)}m)/Proximity Violation"
+    elif dist < 2000 or alt > MAX_SAFE_ALTITUDE:
+        status = "🟡 WARNING"
+        if alt > MAX_SAFE_ALTITUDE:
+            reason = f"Altitude Violation ({int(alt)}m > {MAX_SAFE_ALTITUDE}m)"
+        else:
+            reason = "Perimeter Proximity Violation"
     else:
         status, reason = "🟢 CLEAR", "Normal Ops"
 

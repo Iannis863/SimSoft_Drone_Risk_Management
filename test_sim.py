@@ -1,6 +1,6 @@
 import time
-from threat_engine import assess_risk, get_heading
-from main import log_incident
+from risk_calculator import assess_risk, get_heading
+from radar import log_incident
 
 
 # Mocking the Drone Data Structure from your previous JSON
