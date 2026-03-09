@@ -30,6 +30,92 @@ def process_flight_summary(serial, mission_data):
     print(f"Total Mission Time: {duration}s")
     print("=" * 50 + "\n")
 
+def get_live_drones_raw():
+    """Fetches one raw scan from the API."""
+    token = TOKEN_IANNIS
+    if not token:
+        raise RuntimeError("Missing TOKEN_IANNIS in config.py")
+
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = f"{SENSOR_URL}/api/fused-data/map/10000/0"
+
+    resp = requests.get(endpoint, headers=headers, timeout=10)
+    resp.raise_for_status()
+
+    drones = resp.json()
+    if not isinstance(drones, list):
+        return []
+
+    return drones
+def process_drones_for_ui():
+    """Fetches one scan and returns processed drone data for the UI."""
+    drones = get_live_drones_raw()
+    current_loop_serials = []
+    processed = []
+
+    for d in drones:
+        status, dist, trend, reason, alt = assess_risk(d)
+
+        # same local filtering as radar console
+        if dist < 50000:
+            sn = d.get('serial') or d.get('trackId') or d.get('id')
+            current_loop_serials.append(sn)
+
+            history = d.get('history', [])
+            hdg = get_heading(history) if history else 0.0
+
+
+            location = d.get('droneData', {}).get('location', {}) or {}
+            pilot = d.get('pilotData', {}).get('id') or "Unknown"
+
+            lat = location.get('lat')
+            lng = location.get('lng')
+
+            # Mission tracking logic
+            if sn not in active_missions:
+                active_missions[sn] = {
+                    'start_time': time.time(),
+                    'max_alt': alt
+                }
+            if alt > active_missions[sn]['max_alt']:
+                active_missions[sn]['max_alt'] = alt
+
+            # Log alerts
+            if status != "🟢 CLEAR":
+                log_incident(sn, status, dist, trend, reason)
+
+            # Risk score for UI
+            if "CRITICAL" in status.upper():
+                risk_score = 90
+            elif "WARNING" in status.upper():
+                risk_score = 60
+            elif "CLEAR" in status.upper():
+                risk_score = 20
+            else:
+                risk_score = 0
+
+            processed.append({
+                "Drone ID": sn,
+                "Pilot ID": pilot,
+                "Status": status,
+                "Risk Score": risk_score,
+                "Distance (m)": int(dist),
+                "Trend": trend,
+                "Heading (°)": int(hdg),
+                "Altitude AGL": alt,
+                "Latitude": lat,
+                "Longitude": lng,
+                "Reasons": reason,
+                "raw": d
+            })
+
+
+    for sn in list(active_missions.keys()):
+        if sn not in current_loop_serials:
+            process_flight_summary(sn, active_missions[sn])
+            del active_missions[sn]
+
+    return processed
 
 def start_monitor():
     token = TOKEN_IANNIS
@@ -37,59 +123,24 @@ def start_monitor():
         print("Failed to authenticate. Check config.py.")
         return
 
-    headers = {"Authorization": f"Bearer {token}"}
-    endpoint = f"{SENSOR_URL}/api/fused-data/map/10000/0"
-
     print("--- RADAR INITIALIZING: SECTOR CLUJ ---")
 
     try:
         while True:
-            resp = requests.get(endpoint, headers=headers)
-            if resp.status_code == 200:
-                drones = resp.json()
-                os.system('cls' if os.name == 'nt' else 'clear')
+            drones = process_drones_for_ui()
+            os.system('cls' if os.name == 'nt' else 'clear')
 
-                print(f"--- FLUX.AERO ROGUE DRONE RADAR | {time.strftime('%H:%M:%S')} ---")
-                print(f"{'ID':<10} | {'STATUS':<12} | {' DISTANCE TO ZONE':<10} | {'CLOSEST ZONE':<20}")
-                print("-" * 65)
+            print(f"--- FLUX.AERO ROGUE DRONE RADAR | {time.strftime('%H:%M:%S')} ---")
+            print(f"{'SERIAL/ID':<15} | {'STATUS':<12} | {'DIST':<8} | {'TREND':<10} | {'HDG':<5} | {'ALT'}")
+            print("-" * 75)
 
-                current_loop_serials = []
+            for d in drones:
+                print(
+                    f"{str(d['Drone ID'])[:15]:<15} | {d['Status']:<12} | {d['Distance (m)']:<6}m | "
+                    f"{d['Trend']:<10} | {d['Heading (°)']:<3}° | {d['Altitude AGL']}m"
+                )
 
-                for d in drones:
-                    status, dist, trend, heading, alt, reason, zone_name = assess_risk(d)
-
-                    # Filter for local sector (50km)
-                    if dist < 50000:
-                        # Anchor to Serial, then TrackId, then ID
-                        sn = d.get('serial') or d.get('trackId') or d.get('id')
-                        current_loop_serials.append(sn)
-
-                        # Mission Tracking Logic
-                        if sn not in active_missions:
-                            active_missions[sn] = {
-                                'start_time': time.time(),
-                                'max_alt': alt
-                            }
-                        if alt > active_missions[sn]['max_alt']:
-                            active_missions[sn]['max_alt'] = alt
-
-                        # Log Alerts
-                        if status != "🟢 CLEAR":
-                            log_incident(sn, status, dist, trend, reason)
-
-                        # Console Display
-                        print(f"{str(sn)[:15]:<15} | {status:<12} | {int(dist):<6}m | {trend:<10} | {int(heading):<3}° | {alt}m")
-
-                # Check for Landings/Exits
-                for sn in list(active_missions.keys()):
-                    if sn not in current_loop_serials:
-                        process_flight_summary(sn, active_missions[sn])
-                        del active_missions[sn]
-
-            else:
-                print(f"API Error: {resp.status_code}")
-
-            time.sleep(3)  # Optimized refresh for SimSoft latency
+            time.sleep(3)
 
     except KeyboardInterrupt:
         print("\nSession saved. Radar offline.")

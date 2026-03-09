@@ -1,6 +1,4 @@
 import time
-
-import folium
 import pandas as pd
 import requests
 import streamlit as st
@@ -14,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-from config import SENSOR_URL, TOKEN_IANNIS
+from radar import process_drones_for_ui
 from risk_calculator import assess_risk, get_heading
 
 
@@ -73,70 +71,10 @@ st.markdown("""
 # -----------------------------
 # Helpers
 # -----------------------------
-def fetch_drones():
-    headers = {"Authorization": f"Bearer {TOKEN_IANNIS}"}
-    endpoint = f"{SENSOR_URL}/api/fused-data/map/10000/0"
-
-    response = requests.get(endpoint, headers=headers, timeout=10)
-    response.raise_for_status()
-    data = response.json()
-
-    if not isinstance(data, list):
-        return []
-
-    return data
 
 
-def normalize_drone(d):
-    drone_id = d.get("id", "Unknown")
 
-    location = d.get("droneData", {}).get("location", {})
-    altitudes = d.get("droneData", {}).get("altitudes", {})
-    pilot = d.get("pilotData", {}).get("id") or "Unknown"
-    history = d.get("history", [])
 
-    lat = location.get("lat")
-    lng = location.get("lng")
-    altitude = altitudes.get("agl", 0)
-
-    try:
-        status, dist = assess_risk(d)
-    except Exception:
-        status, dist = "⚪ UNKNOWN", 0
-
-    try:
-        heading = get_heading(history)
-    except Exception:
-        heading = 0
-
-    status_upper = str(status).upper()
-
-    if "CRITICAL" in status_upper:
-        risk_score = 90
-        reasons = ["Unknown pilot close to airport"]
-    elif "WARNING" in status_upper:
-        risk_score = 60
-        reasons = ["Drone near airport or above safe altitude"]
-    elif "CLEAR" in status_upper:
-        risk_score = 20
-        reasons = ["No immediate threat detected"]
-    else:
-        risk_score = 0
-        reasons = ["Insufficient data"]
-
-    return {
-        "Drone ID": drone_id,
-        "Pilot ID": pilot,
-        "Status": status,
-        "Risk Score": risk_score,
-        "Distance (m)": int(dist),
-        "Heading (°)": int(heading),
-        "Altitude AGL": altitude,
-        "Latitude": lat,
-        "Longitude": lng,
-        "Reasons": ", ".join(reasons),
-        "raw": d
-    }
 
 
 def status_priority(status):
@@ -182,13 +120,10 @@ st.caption("Live airport drone monitoring dashboard powered by FLUX sensor data"
 # Load Data
 # -----------------------------
 try:
-    raw_drones = fetch_drones()
-    st.write("Raw drones count:", len(raw_drones))
-    st.write(raw_drones)
-    drones = [normalize_drone(d) for d in raw_drones]
+    drones = process_drones_for_ui()
     drones = sorted(drones, key=lambda x: status_priority(x["Status"]), reverse=True)
 except Exception as e:
-    st.error(f"Could not load drone data: {e}")
+    st.error(f"Could not load drone data from radar.py: {e}")
     st.stop()
 
 if status_filter:
@@ -268,6 +203,7 @@ with left:
 
 with right:
     st.subheader("🗺️ Live Drone Map")
+
 
     airport_lat, airport_lng = AIRPORT_COORDS
 
