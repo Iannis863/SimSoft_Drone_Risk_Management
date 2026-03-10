@@ -4,6 +4,7 @@ import requests
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
+import json
 
 from config import AIRPORT_COORDS
 
@@ -205,7 +206,6 @@ with left:
 with right:
     st.subheader("🗺️ Live Drone Map")
 
-
     airport_lat, airport_lng = AIRPORT_COORDS
 
     m = folium.Map(
@@ -214,46 +214,53 @@ with right:
         tiles="CartoDB positron"
     )
 
-    # Airport marker
+    # 1. LOAD AND DISPLAY ROMATSA RESTRICTED ZONES
+    try:
+        with open('zone_restriction_uav.json', 'r', encoding='utf-8') as f:
+            geo_data = json.load(f)
+
+        folium.GeoJson(
+            geo_data,
+            name="Restricted Airspace",
+            style_function=lambda x: {
+                'fillColor': '#e53e3e',
+                'color': '#e53e3e',
+                'weight': 1,
+                'fillOpacity': 0.15,
+            },
+            tooltip=folium.GeoJsonTooltip(
+                # Change 'name' to 'zone_id' as suggested by the error
+                fields=['zone_id', 'upper_lim', 'status'],
+                aliases=['Zone ID:', 'Max Alt:', 'Status:'],
+                localize=True
+            )
+        ).add_to(m)
+    except Exception as e:
+        st.error(f"Could not overlay restricted zones: {e}")
+
+    # Airport marker (Center Point)
     folium.Marker(
         [airport_lat, airport_lng],
-        tooltip="Henri Coandă Airport"
+        tooltip="Sector Center",
+        icon=folium.Icon(color="blue", icon="info-sign")
     ).add_to(m)
 
-    # Danger zone
-    folium.Circle(
-        location=[airport_lat, airport_lng],
-        radius=1500,
-        color="red",
-        fill=True,
-        fill_opacity=0.08,
-        tooltip="Airport Danger Zone"
-    ).add_to(m)
-
-    # Drone markers
+    # 2. Drone markers
     for d in drones:
         lat = d["Latitude"]
         lng = d["Longitude"]
-
-        if lat is None or lng is None:
-            continue
+        if lat is None or lng is None: continue
 
         status = d["Status"].upper()
-
-        if "CRITICAL" in status:
-            color = "red"
-        elif "WARNING" in status:
-            color = "orange"
-        else:
-            color = "green"
+        color = "red" if "CRITICAL" in status else "orange" if "WARNING" in status else "green"
 
         popup_html = f"""
-            <b>Drone:</b> {d['Drone ID']}<br>
-            <b>Pilot:</b> {d['Pilot ID']}<br>
-            <b>Status:</b> {d['Status']}<br>
-            <b>Distance:</b> {d['Distance (m)']} m<br>
-            <b>Altitude:</b> {d['Altitude AGL']}<br>
-            <b>Heading:</b> {d['Heading (°)']}°
+            <div style="font-family: sans-serif;">
+                <b>ID:</b> {d['Drone ID']}<br>
+                <b>Status:</b> {d['Status']}<br>
+                <b>To Zone:</b> {d['Distance (m)']} m<br>
+                <b>Alt:</b> {d['Altitude AGL']}m
+            </div>
             """
 
         folium.CircleMarker(
@@ -263,7 +270,7 @@ with right:
             fill=True,
             fill_color=color,
             fill_opacity=0.9,
-            popup=popup_html,
+            popup=folium.Popup(popup_html, max_width=200),
             tooltip=d["Drone ID"]
         ).add_to(m)
 
