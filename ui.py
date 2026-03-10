@@ -1,8 +1,9 @@
-import time
+
 import pandas as pd
 import requests
 import streamlit as st
 from streamlit_folium import st_folium
+from streamlit_autorefresh import st_autorefresh
 import folium
 import json
 
@@ -75,8 +76,14 @@ st.markdown("""
 # -----------------------------
 
 
+@st.cache_data(ttl=5)
+def get_drones():
+    return process_drones_for_ui()
 
-
+@st.cache_data
+def load_zone_data():
+    with open('zone_restriction_uav.json', 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 
 def status_priority(status):
@@ -108,9 +115,7 @@ status_filter = st.sidebar.multiselect(
 if manual_refresh:
     st.rerun()
 
-if auto_refresh:
-    time.sleep(refresh_seconds)
-    st.rerun()
+
 
 # -----------------------------
 # Header
@@ -122,7 +127,7 @@ st.caption("Live airport drone monitoring dashboard powered by FLUX sensor data"
 # Load Data
 # -----------------------------
 try:
-    drones = process_drones_for_ui()
+    drones = get_drones()
     drones = sorted(drones, key=lambda x: status_priority(x["Status"]), reverse=True)
 except Exception as e:
     st.error(f"Could not load drone data from radar.py: {e}")
@@ -216,8 +221,7 @@ with right:
 
     # 1. LOAD AND DISPLAY ROMATSA RESTRICTED ZONES
     try:
-        with open('zone_restriction_uav.json', 'r', encoding='utf-8') as f:
-            geo_data = json.load(f)
+        geo_data = load_zone_data()
 
         folium.GeoJson(
             geo_data,
@@ -329,3 +333,6 @@ for d in drones[:12]:
         if show_raw:
             with st.expander("Raw drone JSON"):
                 st.json(d["raw"])
+
+if auto_refresh:
+    st_autorefresh(interval=refresh_seconds * 1000, key="radar_refresh")
