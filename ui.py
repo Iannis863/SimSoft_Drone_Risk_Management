@@ -35,17 +35,18 @@ st.markdown("""
     .metric-card {
         border-radius: 16px;
         padding: 16px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(0,0,0,0.03);
+        border: 1px solid rgba(0,0,0,0.1);
     }
     .metric-title {
         font-size: 0.9rem;
-        color: #a0aec0;
+        color: var(--text-color);
+        opacity: 0.7;
     }
     .metric-value {
         font-size: 1.8rem;
         font-weight: 700;
-        color: white;
+        color: var(--text-color);
     }
     .critical-box {
         padding: 12px;
@@ -68,6 +69,17 @@ st.markdown("""
         border-left: 6px solid #1f9d55;
         margin-bottom: 10px;
     }
+    [data-stale="true"] {
+        opacity: 1 !important;
+        filter: none !important;
+    }
+
+    
+    div[data-testid="stStatusWidget"] {
+        visibility: hidden;
+        height: 0%;
+        position: fixed;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -76,7 +88,7 @@ st.markdown("""
 # -----------------------------
 
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=10)
 def get_drones():
     return process_drones_for_ui()
 
@@ -102,7 +114,7 @@ def status_priority(status):
 # -----------------------------
 st.sidebar.title("⚙️ Controls")
 auto_refresh = st.sidebar.toggle("Auto refresh", value=True)
-refresh_seconds = st.sidebar.slider("Refresh interval (sec)", 2, 15, 2)
+refresh_seconds = st.sidebar.slider("Refresh interval (sec)", 8, 30, 12)
 show_raw = st.sidebar.toggle("Show raw JSON", value=False)
 manual_refresh = st.sidebar.button("Refresh now")
 
@@ -243,42 +255,62 @@ with right:
         st.error(f"Could not overlay restricted zones: {e}")
 
     # Airport marker (Center Point)
-    folium.Marker(
-        [airport_lat, airport_lng],
-        tooltip="Sector Center",
-        icon=folium.Icon(color="blue", icon="info-sign")
-    ).add_to(m)
+    # folium.Marker(
+    #     [airport_lat, airport_lng],
+    #     tooltip="Sector Center",
+    #     icon=folium.Icon(color="blue", icon="info-sign")
+    # ).add_to(m)
 
-    # 2. Drone markers
+    # 2. Drone markers & Historical Paths
     for d in drones:
         lat = d["Latitude"]
         lng = d["Longitude"]
         if lat is None or lng is None: continue
 
         status = d["Status"].upper()
-        color = "red" if "CRITICAL" in status else "orange" if "WARNING" in status else "green"
+        # Use a distinct color for live vs history if you want
+        main_color = "red" if "CRITICAL" in status else "orange" if "WARNING" in status else "green"
 
+        # --- NEW: PLOT HISTORICAL PATH ---
+        history_points = d.get("raw", {}).get("history", [])
+        if history_points:
+            # Convert history list of dicts to list of [lat, lng]
+            path_coords = [[p['lat'], p['lng']] for p in history_points]
+            # Add current position to the end of the line
+            path_coords.append([lat, lng])
+
+            folium.PolyLine(
+                locations=path_coords,
+                color=main_color,
+                weight=2,
+                opacity=0.4,  # Faded look for history
+                dash_array='5, 10'  # Dashed line for a "ghost" track vibe
+            ).add_to(m)
+
+        # --- LIVE POSITION MARKER ---
         popup_html = f"""
-            <div style="font-family: sans-serif;">
-                <b>ID:</b> {d['Drone ID']}<br>
-                <b>Status:</b> {d['Status']}<br>
-                <b>To Zone:</b> {d['Distance (m)']} m<br>
-                <b>Alt:</b> {d['Altitude AGL']}m
-            </div>
-            """
+                    <div style="font-family: sans-serif; width: 150px;">
+                        <b style="color:{main_color}">{d['Drone ID']}</b><br>
+                        <b>Alt:</b> {d['Altitude AGL']}m<br>
+                        <b>Trend:</b> {d['Trend']}
+                    </div>
+                    """
 
         folium.CircleMarker(
             location=[lat, lng],
             radius=8,
-            color=color,
+            color=main_color,
             fill=True,
-            fill_color=color,
-            fill_opacity=0.9,
+            fill_color=main_color,
+            fill_opacity=1.0,  # Solid for the live drone
             popup=folium.Popup(popup_html, max_width=200),
-            tooltip=d["Drone ID"]
+            tooltip=f"LIVE: {d['Drone ID']}"
         ).add_to(m)
 
-    st_folium(m, width="100%", height=520)
+
+    folium.LayerControl().add_to(m)
+
+    st_folium(m, width=None, height=520, key="live_map")
 
 # -----------------------------
 # Table
