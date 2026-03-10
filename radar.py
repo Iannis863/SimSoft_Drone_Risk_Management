@@ -36,8 +36,10 @@ def get_live_drones_raw():
     if not token:
         raise RuntimeError("Missing TOKEN_IANNIS in config.py")
 
+    history_offset = 36000
+
     headers = {"Authorization": f"Bearer {token}"}
-    endpoint = f"{SENSOR_URL}/api/fused-data/map/10000/0"
+    endpoint = f"{SENSOR_URL}/api/fused-data/map/50000/0"
 
     resp = requests.get(endpoint, headers=headers, timeout=10)
     resp.raise_for_status()

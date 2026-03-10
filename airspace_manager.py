@@ -16,7 +16,7 @@ class AirspaceManager:
             self.restricted_features = [
                 {
                     "polygon": shape(feat["geometry"]),
-                    "name": feat.get("properties", {}).get("name", "Unknown Zone")
+                    "name": feat.get("properties", {}).get("zone_id", "Unknown Zone")
                 }
                 for feat in data.get("features", [])
             ]
