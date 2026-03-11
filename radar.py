@@ -41,7 +41,7 @@ def get_live_drones_raw():
     headers = {"Authorization": f"Bearer {token}"}
     endpoint = f"{SENSOR_URL}/api/fused-data/map/50000/0"
 
-    resp = requests.get(endpoint, headers=headers, timeout=10)
+    resp = requests.get(endpoint, headers=headers, timeout=180)
     resp.raise_for_status()
 
     drones = resp.json()
@@ -58,7 +58,6 @@ def process_drones_for_ui():
     for d in drones:
         status, dist, trend, hdg, alt, reason, name = assess_risk(d)
 
-        # same local filtering as radar console
         if dist < 50000:
             sn = d.get('serial') or d.get('trackId') or d.get('id')
             current_loop_serials.append(sn)
@@ -133,6 +132,7 @@ def start_monitor():
             print("-" * 75)
 
             for d in drones:
+
                 print(
                     f"{str(d['Drone ID'])[:15]:<15} | {d['Status']:<12} | {d['Distance (m)']:<6}m | "
                     f"{d['Trend']:<10} | {d['Heading (°)']:<3}° | {d['Altitude AGL']}m"
