@@ -6,6 +6,7 @@ from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 import folium
 import json
+import pydeck as pdk
 
 from config import AIRPORT_COORDS
 
@@ -16,7 +17,7 @@ st.set_page_config(
 )
 
 from radar import process_drones_for_ui
-from risk_calculator import assess_risk, get_heading
+
 
 
 
@@ -98,6 +99,71 @@ def load_zone_data():
         return json.load(f)
 
 
+def get_status_color(status):
+    s = str(status).upper()
+    if "CRITICAL" in s:
+        return [229, 62, 62, 220]   # red
+    if "WARNING" in s:
+        return [214, 158, 46, 220]  # orange
+    return [31, 157, 85, 220]       # green
+
+
+def build_3d_map_df(drones):
+    rows = []
+    for d in drones:
+        lat = d.get("Latitude")
+        lng = d.get("Longitude")
+        alt = d.get("Altitude AGL", 0)
+
+        if lat is None or lng is None:
+            continue
+
+        try:
+            altitude = float(alt) if alt is not None else 0
+        except Exception:
+            altitude = 0
+
+        rows.append({
+            "Drone ID": d["Drone ID"],
+            "Pilot ID": d["Pilot ID"],
+            "Status": d["Status"],
+            "Latitude": float(lat),
+            "Longitude": float(lng),
+            "Altitude AGL": altitude,
+            "Distance (m)": d["Distance (m)"],
+            "Trend": d.get("Trend", ""),
+            "color": get_status_color(d["Status"]),
+            # make columns visible in 3D
+            "elevation": max(altitude * 8, 30)
+        })
+
+    return pd.DataFrame(rows)
+
+def build_zone_df(geo_data):
+    zones = []
+
+    for feature in geo_data["features"]:
+        props = feature.get("properties", {})
+        geom = feature.get("geometry", {})
+
+        if geom.get("type") != "Polygon":
+            continue
+
+        coords = geom.get("coordinates", [])
+        if not coords:
+            continue
+
+        # GeoJSON stores coordinates as [lng, lat]
+        polygon = [[c[0], c[1]] for c in coords[0]]
+
+        zones.append({
+            "polygon": polygon,
+            "zone_id": props.get("zone_id", "Unknown"),
+            "upper_lim": props.get("upper_lim", "Unknown"),
+            "status": props.get("status", "")
+        })
+
+    return pd.DataFrame(zones)
 def status_priority(status):
     s = str(status).upper()
     if "CRITICAL" in s:
@@ -117,6 +183,9 @@ auto_refresh = st.sidebar.toggle("Auto refresh", value=True)
 refresh_seconds = st.sidebar.slider("Refresh interval (sec)", 8, 30, 12)
 show_raw = st.sidebar.toggle("Show raw JSON", value=False)
 manual_refresh = st.sidebar.button("Refresh now")
+pitch_angle = st.sidebar.slider("3D view angle", 0, 75, 55)
+bearing_angle = st.sidebar.slider("Map rotation", -180, 180, 0)
+zoom_level = st.sidebar.slider("Zoom level", 8.0, 16.0, 10.8, 0.1)
 
 status_filter = st.sidebar.multiselect(
     "Filter status",
@@ -221,96 +290,100 @@ with left:
         )
 
 with right:
-    st.subheader("🗺️ Live Drone Map")
+    st.subheader("🗺️ Live 3D Drone Map")
 
     airport_lat, airport_lng = AIRPORT_COORDS
+    map_df = build_3d_map_df(drones)
+    geo_data = load_zone_data()
+    zone_df = build_zone_df(geo_data)
+    if map_df.empty:
+        st.info("No drone coordinates available for 3D map.")
+    else:
+        view_state = pdk.ViewState(
+            latitude=airport_lat,
+            longitude=airport_lng,
+            zoom=zoom_level,
+            pitch=pitch_angle,
+            bearing=bearing_angle
+        )
 
-    m = folium.Map(
-        location=[airport_lat, airport_lng],
-        zoom_start=11,
-        tiles="CartoDB positron"
-    )
+        drone_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=map_df,
+            get_position='[Longitude, Latitude]',
+            get_radius=200,
+            radius_scale=2,
+            radius_min_pixels=6,
+            radius_max_pixels=60,
+            get_fill_color=[255, 0, 0, 240],  # brighter red
+            get_line_color=[255, 255, 255],  # white outline
+            line_width_min_pixels=2,
+            pickable=True,
+        )
 
-    # 1. LOAD AND DISPLAY ROMATSA RESTRICTED ZONES
-    try:
-        geo_data = load_zone_data()
+        text_layer = pdk.Layer(
+            "TextLayer",
+            data=map_df,
+            get_position='[Longitude, Latitude]',
+            get_text="Drone ID",
+            get_size=14,
+            get_color=[20, 20, 20, 220],
+            get_angle=0,
+            get_text_anchor="'start'",
+            get_alignment_baseline="'bottom'",
+            pickable=False
+        )
 
-        folium.GeoJson(
-            geo_data,
-            name="Restricted Airspace",
-            style_function=lambda x: {
-                'fillColor': '#e53e3e',
-                'color': '#e53e3e',
-                'weight': 1,
-                'fillOpacity': 0.15,
-            },
-            tooltip=folium.GeoJsonTooltip(
-                # Change 'name' to 'zone_id' as suggested by the error
-                fields=['zone_id', 'upper_lim', 'status'],
-                aliases=['Zone ID:', 'Max Alt:', 'Status:'],
-                localize=True
-            )
-        ).add_to(m)
-    except Exception as e:
-        st.error(f"Could not overlay restricted zones: {e}")
+        airport_df = pd.DataFrame([{
+            "name": "Airport",
+            "Latitude": airport_lat,
+            "Longitude": airport_lng
+        }])
 
-    # Airport marker (Center Point)
-    # folium.Marker(
-    #     [airport_lat, airport_lng],
-    #     tooltip="Sector Center",
-    #     icon=folium.Icon(color="blue", icon="info-sign")
-    # ).add_to(m)
+        airport_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=airport_df,
+            get_position='[Longitude, Latitude]',
+            get_radius=180,
+            get_fill_color=[0, 140, 255, 200],
+            pickable=True
+        )
 
-    # 2. Drone markers & Historical Paths
-    for d in drones:
-        lat = d["Latitude"]
-        lng = d["Longitude"]
-        if lat is None or lng is None: continue
+        tooltip = {
+            "html": """
+                    <b>ID:</b> {Drone ID}<br/>
+                    <b>Pilot:</b> {Pilot ID}<br/>
+                    <b>Status:</b> {Status}<br/>
+                    <b>Altitude:</b> {Altitude AGL} m<br/>
+                    <b>Distance:</b> {Distance (m)} m<br/>
+                    <b>Trend:</b> {Trend}
+                """,
+            "style": {
+                "backgroundColor": "rgba(20,20,20,0.85)",
+                "color": "white"
+            }
+        }
+        zone_layer = pdk.Layer(
+            "PolygonLayer",
+            data=zone_df,
+            get_polygon="polygon",
+            get_fill_color=[229, 62, 62, 80],
+            get_line_color=[229, 62, 62, 200],
+            line_width_min_pixels=2,
+            pickable=True,
+        )
+        deck = pdk.Deck(
+            map_style="light",
+            initial_view_state=view_state,
+            layers=[zone_layer,drone_layer, airport_layer, text_layer],
+            tooltip=tooltip
+        )
 
-        status = d["Status"].upper()
-        # Use a distinct color for live vs history if you want
-        main_color = "red" if "CRITICAL" in status else "orange" if "WARNING" in status else "green"
-
-        # --- NEW: PLOT HISTORICAL PATH ---
-        history_points = d.get("raw", {}).get("history", [])
-        if history_points:
-            # Convert history list of dicts to list of [lat, lng]
-            path_coords = [[p['lat'], p['lng']] for p in history_points]
-            # Add current position to the end of the line
-            path_coords.append([lat, lng])
-
-            folium.PolyLine(
-                locations=path_coords,
-                color=main_color,
-                weight=2,
-                opacity=0.4,  # Faded look for history
-                dash_array='5, 10'  # Dashed line for a "ghost" track vibe
-            ).add_to(m)
-
-        # --- LIVE POSITION MARKER ---
-        popup_html = f"""
-                    <div style="font-family: sans-serif; width: 150px;">
-                        <b style="color:{main_color}">{d['Drone ID']}</b><br>
-                        <b>Alt:</b> {d['Altitude AGL']}m<br>
-                        <b>Trend:</b> {d['Trend']}
-                    </div>
-                    """
-
-        folium.CircleMarker(
-            location=[lat, lng],
-            radius=8,
-            color=main_color,
-            fill=True,
-            fill_color=main_color,
-            fill_opacity=1.0,  # Solid for the live drone
-            popup=folium.Popup(popup_html, max_width=200),
-            tooltip=f"LIVE: {d['Drone ID']}"
-        ).add_to(m)
+        st.pydeck_chart(deck, use_container_width=True)
 
 
-    folium.LayerControl().add_to(m)
 
-    st_folium(m, width=None, height=520, key="live_map")
+
 
 # -----------------------------
 # Table
