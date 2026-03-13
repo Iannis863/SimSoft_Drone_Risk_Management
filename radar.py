@@ -49,49 +49,44 @@ def get_live_drones_raw():
         return []
 
     return drones
-def process_drones_for_ui():
-    """Fetches one scan and returns processed drone data for the UI."""
-    drones = get_live_drones_raw()
-    current_loop_serials = []
-    processed = []
 
-    for d in drones:
+
+def process_drones_for_ui():
+    """Fetches and de-duplicates drone data."""
+    raw_drones = get_live_drones_raw()
+    current_loop_serials = []
+
+    # Use a dictionary to store unique drones (Key = Drone ID)
+    unique_drones = {}
+
+    for d in raw_drones:
         status, dist, trend, hdg, alt, reason, name = assess_risk(d)
 
+        # Consistent ID extraction
+        sn = d.get('serial') or d.get('trackId') or d.get('id')
+        if not sn: continue
+
+        # Local filtering (e.g., within 50km)
         if dist < 50000:
-            sn = d.get('serial') or d.get('trackId') or d.get('id')
             current_loop_serials.append(sn)
 
             location = d.get('droneData', {}).get('location', {}) or {}
             pilot = d.get('pilotData', {}).get('id') or "Unknown"
 
-            lat = location.get('lat')
-            lng = location.get('lng')
-
-            # Mission tracking logic
+            # Mission tracking (Max Altitude logic)
             if sn not in active_missions:
-                active_missions[sn] = {
-                    'start_time': time.time(),
-                    'max_alt': alt
-                }
+                active_missions[sn] = {'start_time': time.time(), 'max_alt': alt}
             if alt > active_missions[sn]['max_alt']:
                 active_missions[sn]['max_alt'] = alt
 
-            # Log alerts
+            # Log incidents for warnings/critical
             if status != "🟢 CLEAR":
                 log_incident(sn, status, dist, trend, reason)
 
-            # Risk score for UI
-            if "CRITICAL" in status.upper():
-                risk_score = 90
-            elif "WARNING" in status.upper():
-                risk_score = 60
-            elif "CLEAR" in status.upper():
-                risk_score = 20
-            else:
-                risk_score = 0
+            risk_score = 90 if "CRITICAL" in status.upper() else 60 if "WARNING" in status.upper() else 20
 
-            processed.append({
+            # Store in dictionary - this automatically filters duplicates
+            unique_drones[sn] = {
                 "Drone ID": sn,
                 "Pilot ID": pilot,
                 "Status": status,
@@ -100,19 +95,20 @@ def process_drones_for_ui():
                 "Trend": trend,
                 "Heading (°)": int(hdg),
                 "Altitude AGL": alt,
-                "Latitude": lat,
-                "Longitude": lng,
+                "Latitude": location.get('lat'),
+                "Longitude": location.get('lng'),
                 "Reasons": reason,
                 "raw": d
-            })
+            }
 
-
+    # Handle mission completion for drones that disappeared
     for sn in list(active_missions.keys()):
         if sn not in current_loop_serials:
             process_flight_summary(sn, active_missions[sn])
             del active_missions[sn]
 
-    return processed
+    # Return only the values of the dictionary as a list
+    return list(unique_drones.values())
 
 def start_monitor():
     token = TOKEN_IANNIS
