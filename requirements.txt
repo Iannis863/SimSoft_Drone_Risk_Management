@@ -6,3 +6,4 @@ folium
 streamlit-folium
 shapely
 streamlit-autorefresh
+pydeck
