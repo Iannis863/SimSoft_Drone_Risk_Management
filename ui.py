@@ -5,6 +5,7 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import json
 import pydeck as pdk
+import re
 
 from config import ROMANIA_CENTER_LAT, ROMANIA_CENTER_LNG
 from radar import process_drones_for_ui, reset_radar_state
@@ -127,6 +128,33 @@ def build_3d_map_df(drones):
     return pd.DataFrame(rows)
 
 
+def parse_altitude(alt_str):
+    """
+    Converts altitude strings (GND, 120M AGL, 2500FT AMSL) to float meters.
+    """
+    if not alt_str:
+        return 0.0
+
+    s = str(alt_str).upper().strip()
+
+    # GND or 0m is 0
+    if s == "GND" or s.startswith("0"):
+        return 0.0
+
+    # Extract numeric part
+    match = re.search(r"(\d+)", s)
+    if not match:
+        return 0.0
+
+    value = float(match.group(1))
+
+    # Conversion: Feet to Meters (1 ft = 0.3048 m)
+    if "FT" in s:
+        return value * 0.3048
+
+    # Default is meters
+    return value
+
 def build_zone_df(geo_data):
     zones = []
     if not geo_data: return pd.DataFrame()
@@ -138,11 +166,19 @@ def build_zone_df(geo_data):
         coords = geom.get("coordinates", [])
         if not coords:
             continue
+        lower_str = props.get("lower_lim", "GND")
+        upper_str = props.get("upper_lim", "Unknown")
+        lower_m = parse_altitude(lower_str)
+        upper_m = parse_altitude(upper_str)
         polygon = [[c[0], c[1]] for c in coords[0]]
         zones.append({
             "polygon": polygon,
             "zone_id": props.get("zone_id", "Unknown"),
-            "upper_lim": props.get("upper_lim", "Unknown"),
+            "min_alt": lower_str,  # Raw string for display
+            "max_alt": upper_str,  # Raw string for display
+            "lower_m": lower_m,
+            "upper_m": upper_m,
+            "elevation": upper_m,
             "status": props.get("status", "")
         })
     return pd.DataFrame(zones)
@@ -277,8 +313,8 @@ with tab_live:
             layers = [
                 pdk.Layer("PathLayer", data=path_data, get_path="path", get_color="color", width_min_pixels=2,
                           dash_array=[5, 5], cap_rounded=True),
-                pdk.Layer("PolygonLayer", data=zone_df, get_polygon="polygon", get_fill_color=[229, 62, 62, 80],
-                          get_line_color=[229, 62, 62, 200], line_width_min_pixels=2, pickable=True),
+                pdk.Layer("PolygonLayer", data=zone_df, get_polygon="polygon", get_fill_color=[229, 62, 62, 80], get_line_color=[229, 62, 62, 200],
+                          line_width_min_pixels=2, pickable=True, extruded=True, get_elevation="elevation",elevation_scale=1,),
                 pdk.Layer(
                     "ScatterplotLayer",
                     data=map_df,
@@ -321,18 +357,43 @@ with tab_live:
             ]
 
             tooltip = {
-                "html": "<b>ID:</b> {Drone ID}<br/><b>Pilot:</b> {Pilot ID}<br/><b>Status:</b> {Status}<br/><b>Altitude:</b> {Altitude AGL} m",
-                "style": {"backgroundColor": "rgba(20,20,20,0.85)", "color": "white"}}
+                "html": """
+                    <div style='font-family: sans-serif;'>
+                        # IF DRONE
+                        <div style='display: {["Drone ID"] ? "block" : "none"}'>
+                            <b>Drone ID:</b> {Drone ID}<br/>
+                            <b>Status:</b> {Status}<br/>
+                            <b>Altitude:</b> {Altitude AGL} m
+                        </div>
 
-            # FIX 5: Static key to maintain GL context during script reruns
-            st.pydeck_chart(pdk.Deck(
-                map_style="light",
-                initial_view_state=view_state,
-                layers=layers,
-                tooltip=tooltip,
-            ),
-            key="radar_map_3d_primary",
-            use_container_width=True)
+                        # IF ZONE
+                        <div style='display: {zone_id ? "block" : "none"}'>
+                            <b>Zone:</b> {zone_id}<br/>
+                            <b>Min Alt:</b> {min_alt}<br/>
+                            <b>Max Alt:</b> {max_alt}<br/>
+                            <b>Status:</b> {status}
+                        </div>
+                    </div>
+                """,
+                "style": {
+                    "backgroundColor": "rgba(20,20,20,0.9)",
+                    "color": "white",
+                    "borderRadius": "8px",
+                    "padding": "10px"
+                }
+            }
+
+            # Apply to the deck
+            st.pydeck_chart(
+                pdk.Deck(
+                    map_style="light",
+                    initial_view_state=view_state,
+                    layers=layers,
+                    tooltip=tooltip
+                ),
+                use_container_width=True,
+                key="radar_map_primary"
+            )
 
     st.subheader("📋 Live Drone Feed")
     if drones:
