@@ -2,7 +2,7 @@ import requests
 import time
 import os
 import csv
-from risk_calculator import assess_risk, get_heading
+from risk_calculator import assess_risk
 from config import SENSOR_URL, TOKEN_IANNIS
 
 # --- PERSISTENCE FIX ---

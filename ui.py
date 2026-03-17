@@ -2,13 +2,11 @@ import os
 import time
 import pandas as pd
 import streamlit as st
-from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
-import folium
 import json
 import pydeck as pdk
 
-from config import AIRPORT_COORDS
+from config import ROMANIA_CENTER_LAT, ROMANIA_CENTER_LNG
 from radar import process_drones_for_ui, reset_radar_state
 
 # -----------------------------
@@ -96,7 +94,7 @@ def load_zone_data():
 def get_status_color(status):
     s = str(status).upper()
     if "CRITICAL" in s:
-        return [229, 62, 62, 220]  # red
+        return [255, 0, 0, 220]  # red
     if "WARNING" in s:
         return [214, 158, 46, 220]  # orange
     return [31, 157, 85, 220]  # green
@@ -124,7 +122,7 @@ def build_3d_map_df(drones):
             "Distance (m)": d["Distance (m)"],
             "Trend": d.get("Trend", ""),
             "color": get_status_color(d["Status"]),
-            "elevation": max(altitude * 8, 30)
+            "elevation": altitude
         })
     return pd.DataFrame(rows)
 
@@ -166,7 +164,9 @@ auto_refresh = st.sidebar.toggle("Auto refresh", value=True)
 refresh_seconds = st.sidebar.slider("Refresh interval (sec)", 2, 30, 5)
 show_raw = st.sidebar.toggle("Show raw JSON", value=False)
 manual_refresh = st.sidebar.button("Refresh now")
-pitch_angle = st.sidebar.slider("3D view angle", 0, 75, 0)
+
+# FIX 1: Pitch capped at 60 to prevent the map blackout bug
+pitch_angle = st.sidebar.slider("3D view angle", 0, 60, 45)
 
 status_filter = st.sidebar.multiselect(
     "Filter live status",
@@ -247,7 +247,6 @@ with tab_live:
 
     with right:
         st.subheader("🗺️ Live 3D Drone Map")
-        airport_lat, airport_lng = AIRPORT_COORDS
         map_df = build_3d_map_df(drones)
         geo_data = load_zone_data()
         zone_df = build_zone_df(geo_data)
@@ -255,14 +254,21 @@ with tab_live:
         if map_df.empty:
             st.info("No drone coordinates available for 3D map.")
         else:
-            view_state = pdk.ViewState(latitude=airport_lat, longitude=airport_lng, zoom=11, pitch=pitch_angle)
+            # FIX 2: Explicitly linking pitch_angle to the ViewState
+            view_state = pdk.ViewState(
+                latitude=ROMANIA_CENTER_LAT,
+                longitude=ROMANIA_CENTER_LNG,
+                zoom=5.7,
+                pitch=pitch_angle,
+                bearing=0
+            )
 
             path_data = []
             for d in drones:
                 history = d.get("raw", {}).get("history", [])
                 if history:
                     coords = [[p['lng'], p['lat']] for p in history]
-                    coords.append([d['Longitude'], d['Latitude']])  # Add current pos
+                    coords.append([d['Longitude'], d['Latitude']])
                     path_data.append({
                         "path": coords,
                         "color": get_status_color(d["Status"])
@@ -270,24 +276,63 @@ with tab_live:
 
             layers = [
                 pdk.Layer("PathLayer", data=path_data, get_path="path", get_color="color", width_min_pixels=2,
-                    dash_array=[5, 5], cap_rounded=True),
+                          dash_array=[5, 5], cap_rounded=True),
                 pdk.Layer("PolygonLayer", data=zone_df, get_polygon="polygon", get_fill_color=[229, 62, 62, 80],
                           get_line_color=[229, 62, 62, 200], line_width_min_pixels=2, pickable=True),
-                pdk.Layer("ScatterplotLayer", data=map_df, get_position='[Longitude, Latitude]', get_radius=200,
-                          radius_scale=2, radius_min_pixels=10, radius_max_pixels=10, get_fill_color=[255, 0, 0, 240],
-                          get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
-                pdk.Layer("TextLayer", data=map_df, get_position='[Longitude, Latitude]', get_text="Drone ID",
-                          get_size=14, get_color=[255, 255, 255], get_alignment_baseline="'bottom'"),
-                pdk.Layer("ScatterplotLayer", data=pd.DataFrame([{"Longitude": airport_lng, "Latitude": airport_lat}]),
-                          get_position='[Longitude, Latitude]', get_radius=180, get_fill_color=[0, 140, 255, 200],
-                          pickable=True)
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    data=map_df,
+                    get_position='[Longitude, Latitude]',
+                    get_fill_color="color",
+                    get_radius=800,
+                    radius_min_pixels=15,
+                    radius_max_pixels=30,
+                    opacity=0.4,
+                    pickable=False,
+                ),
+                pdk.Layer(
+                    "ColumnLayer",
+                    data=map_df,
+                    get_position='[Longitude, Latitude]',
+                    get_elevation='elevation',
+                    # FIX 3: Increased scale for better 3D definition at limited pitch
+                    elevation_scale=1,
+                    radius=15,
+                    radius_units="'meters'",
+                    radius_min_pixels=4,
+                    radius_max_pixels=12,
+                    get_fill_color="color",
+                    pickable=True,
+                    extruded=True,
+                    coverage=1
+                ),
+                pdk.Layer(
+                    "TextLayer",
+                    data=map_df,
+                    get_position='[Longitude, Latitude]',
+                    get_text="Drone ID",
+                    get_size=14,
+                    get_color=[255, 255, 255],
+                    get_alignment_baseline="'bottom'",
+                    # FIX 4: Ensure text stays atop the taller columns
+                    get_elevation='elevation',
+                    elevation_scale=10
+                )
             ]
 
             tooltip = {
                 "html": "<b>ID:</b> {Drone ID}<br/><b>Pilot:</b> {Pilot ID}<br/><b>Status:</b> {Status}<br/><b>Altitude:</b> {Altitude AGL} m",
                 "style": {"backgroundColor": "rgba(20,20,20,0.85)", "color": "white"}}
-            st.pydeck_chart(pdk.Deck(map_style="light", initial_view_state=view_state, layers=layers, tooltip=tooltip),
-                            use_container_width=True)
+
+            # FIX 5: Static key to maintain GL context during script reruns
+            st.pydeck_chart(pdk.Deck(
+                map_style="light",
+                initial_view_state=view_state,
+                layers=layers,
+                tooltip=tooltip,
+            ),
+            key="radar_map_3d_primary",
+            use_container_width=True)
 
     st.subheader("📋 Live Drone Feed")
     if drones:
