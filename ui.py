@@ -7,6 +7,7 @@ from streamlit_autorefresh import st_autorefresh
 import folium
 import json
 import pydeck as pdk
+import math
 
 from config import AIRPORT_COORDS
 from radar import process_drones_for_ui, reset_radar_state
@@ -80,7 +81,7 @@ st.markdown("""
 # -----------------------------
 # Helpers
 # -----------------------------
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=2)
 def get_drones():
     return process_drones_for_ui()
 
@@ -148,7 +149,24 @@ def build_zone_df(geo_data):
             "status": props.get("status", "")
         })
     return pd.DataFrame(zones)
+def pulse_radius(status, drone_id):
+    s = str(status).upper()
 
+    base = 180
+    amp = 90
+
+    if "CRITICAL" in s:
+        base = 260
+        amp = 140
+    elif "WARNING" in s:
+        base = 220
+        amp = 110
+
+    # stable per-drone phase offset so all drones don't pulse identically
+    offset = (sum(ord(c) for c in str(drone_id)) % 20) / 20.0
+
+    t = time.time() * 2.2 + offset
+    return base + amp * (0.5 + 0.5 * math.sin(t))
 
 def status_priority(status):
     s = str(status).upper()
@@ -163,7 +181,7 @@ def status_priority(status):
 # -----------------------------
 st.sidebar.title("⚙️ Controls")
 auto_refresh = st.sidebar.toggle("Auto refresh", value=True)
-refresh_seconds = st.sidebar.slider("Refresh interval (sec)", 2, 30, 5)
+refresh_seconds = st.sidebar.slider("Refresh interval (sec)", 1, 30, 2)
 show_raw = st.sidebar.toggle("Show raw JSON", value=False)
 manual_refresh = st.sidebar.button("Refresh now")
 pitch_angle = st.sidebar.slider("3D view angle", 0, 75, 0)
@@ -251,6 +269,11 @@ with tab_live:
         map_df = build_3d_map_df(drones)
         geo_data = load_zone_data()
         zone_df = build_zone_df(geo_data)
+        if not map_df.empty:
+            map_df["pulse_radius"] = [
+                pulse_radius(row["Status"], row["Drone ID"])
+                for _, row in map_df.iterrows()
+            ]
 
         if map_df.empty:
             st.info("No drone coordinates available for 3D map.")
@@ -269,18 +292,88 @@ with tab_live:
                     })
 
             layers = [
-                pdk.Layer("PathLayer", data=path_data, get_path="path", get_color="color", width_min_pixels=2,
-                    dash_array=[5, 5], cap_rounded=True),
-                pdk.Layer("PolygonLayer", data=zone_df, get_polygon="polygon", get_fill_color=[229, 62, 62, 80],
-                          get_line_color=[229, 62, 62, 200], line_width_min_pixels=2, pickable=True),
-                pdk.Layer("ScatterplotLayer", data=map_df, get_position='[Longitude, Latitude]', get_radius=200,
-                          radius_scale=2, radius_min_pixels=10, radius_max_pixels=10, get_fill_color=[255, 0, 0, 240],
-                          get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
-                pdk.Layer("TextLayer", data=map_df, get_position='[Longitude, Latitude]', get_text="Drone ID",
-                          get_size=14, get_color=[255, 255, 255], get_alignment_baseline="'bottom'"),
-                pdk.Layer("ScatterplotLayer", data=pd.DataFrame([{"Longitude": airport_lng, "Latitude": airport_lat}]),
-                          get_position='[Longitude, Latitude]', get_radius=180, get_fill_color=[0, 140, 255, 200],
-                          pickable=True)
+                pdk.Layer(
+                    "PathLayer",
+                    data=path_data,
+                    get_path="path",
+                    get_color="color",
+                    width_min_pixels=2,
+                    dash_array=[5, 5],
+                    cap_rounded=True
+                ),
+
+                pdk.Layer(
+                    "PolygonLayer",
+                    data=zone_df,
+                    get_polygon="polygon",
+                    get_fill_color=[229, 62, 62, 80],
+                    get_line_color=[229, 62, 62, 200],
+                    line_width_min_pixels=2,
+                    pickable=True
+                ),
+                pdk.Layer(
+                    "ColumnLayer",
+                    data=map_df,
+                    get_position='[Longitude, Latitude]',
+                    get_elevation="elevation",
+                    elevation_scale=1,
+                    radius=120,
+                    radius_min_pixels=6,
+                    radius_max_pixels=20,
+                    get_fill_color="color",
+                    pickable=True,
+                    auto_highlight=True
+                ),
+
+                # outer pulse
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    data=map_df,
+                    get_position='[Longitude, Latitude]',
+                    get_radius="pulse_radius",
+                    radius_scale=1,
+                    radius_min_pixels=12,
+                    radius_max_pixels=40,
+                    get_fill_color="color",
+                    opacity=0.18,
+                    stroked=False,
+                    pickable=False
+                ),
+
+                # live marker
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    data=map_df,
+                    get_position='[Longitude, Latitude]',
+                    get_radius=140,
+                    radius_scale=1,
+                    radius_min_pixels=8,
+                    radius_max_pixels=18,
+                    get_fill_color="color",
+                    get_line_color=[255, 255, 255, 255],
+                    line_width_min_pixels=2,
+                    stroked=True,
+                    pickable=True
+                ),
+
+                pdk.Layer(
+                    "TextLayer",
+                    data=map_df,
+                    get_position='[Longitude, Latitude]',
+                    get_text="Drone ID",
+                    get_size=14,
+                    get_color=[255, 255, 255],
+                    get_alignment_baseline="'bottom'"
+                ),
+
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    data=pd.DataFrame([{"Longitude": airport_lng, "Latitude": airport_lat}]),
+                    get_position='[Longitude, Latitude]',
+                    get_radius=180,
+                    get_fill_color=[0, 140, 255, 200],
+                    pickable=True
+                )
             ]
 
             tooltip = {
