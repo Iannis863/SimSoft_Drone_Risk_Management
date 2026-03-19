@@ -160,6 +160,14 @@ with tab_live:
             pdk.Layer("PathLayer", data=path_data, get_path="path", get_color="color", width_min_pixels=2,
                       dash_array=[5, 5], cap_rounded=True),
             pdk.Layer(
+                "LineLayer",
+                data=map_df,
+                get_source_position="[Longitude, Latitude]",
+                get_target_position="[Future_Lng, Future_Lat]",
+                get_color="color",
+                get_width=3
+            ),
+            pdk.Layer(
                 "ScatterplotLayer",
                 data=map_df,
                 get_position='[Longitude, Latitude]',

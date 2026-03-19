@@ -52,15 +52,19 @@ def process_drones_for_ui():
         return []
 
     for d in raw_data:
-        # Robust ID detection
         sn = d.get('serial') or d.get('trackId') or d.get('id')
         if not sn: continue
         drone_id = d.get('droneId') or sn
 
-        # The Single Pass: Unpack all 7 values from your Brain (Risk Calculator)
-        status, dist, trend, hdg, alt, reason, zone = assess_risk(d)
+        status, dist, trend, hdg, alt, reason, zone, speed = assess_risk(d)
 
         log_incident(drone_id, status, dist, trend, reason)
+
+        from predictor import project_future_position
+        curr_lat = d.get('droneData', {}).get('location', {}).get('lat')
+        curr_lng = d.get('droneData', {}).get('location', {}).get('lng')
+
+        f_lat, f_lng = project_future_position(curr_lat, curr_lng, hdg, speed, 20)
 
         # Build the "Map-Ready" dictionary immediately
         unique_drones[sn] = {
@@ -73,9 +77,10 @@ def process_drones_for_ui():
             "Altitude AGL": alt,
             "Latitude": d.get('droneData', {}).get('location', {}).get('lat'),
             "Longitude": d.get('droneData', {}).get('location', {}).get('lng'),
+            "Future_Lat": f_lat,
+            "Future_Lng": f_lng,
             "Reasons": reason,
             "Zone": zone,
-            # --- MAP SPECIFIC FIELDS (Moved here to kill redundancy) ---
             "Label": f"{drone_id} ({alt}m)",
             "color": get_status_color(status),
             "elevation": alt,
