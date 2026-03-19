@@ -16,10 +16,11 @@ def parse_altitude(alt_str):
     return value
 
 def get_status_color(status):
-    """Mapping status strings to RGBA colors."""
     s = str(status).upper()
     if "CRITICAL" in s:
-        return [255, 0, 0, 220]  # Red
+        return [255, 0, 0, 220]      # Red
+    if "PREDICTIVE" in s:
+        return [255, 0, 255, 220]    # Magenta/Purple
     if "WARNING" in s:
-        return [214, 158, 46, 220]  # Orange
-    return [31, 157, 85, 220]  # Green
+        return [214, 158, 46, 220]   # Orange
+    return [31, 157, 85, 220]        # Green

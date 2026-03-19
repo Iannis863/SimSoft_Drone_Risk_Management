@@ -35,6 +35,33 @@ def get_proximity_trend(history, current_alt):
     return "↔️ HOVERING"
 
 
+def get_speed(history):
+    """Calculates horizontal speed in meters per second."""
+    if len(history) < 2: return 0.0
+    p1, p2 = history[-2], history[-1]
+
+    # Reuse your distance logic (approx 111139 meters per degree)
+    lat_dist = (p2['lat'] - p1['lat']) * 111139
+    lng_dist = (p2['lng'] - p1['lng']) * 111139 * math.cos(math.radians(p1['lat']))
+
+    dist_m = math.sqrt(lat_dist ** 2 + lng_dist ** 2)
+    return dist_m
+
+
+def check_prediction(lat, lng, heading, speed, alt):
+    """Checks if the projected path intersects a restricted zone."""
+    if speed < 1.0: return "SAFE"
+
+    from predictor import project_future_position
+    fut_lat, fut_lng = project_future_position(lat, lng, heading, speed, seconds_ahead=20)
+
+    dist_at_t20, zone_name = airspace.get_distance_to_closest_zone_3d(fut_lat, fut_lng, alt)
+
+    if dist_at_t20 == 0:
+        return f"PREDICTED BREACH: {zone_name} in 20s"
+    return "SAFE"
+
+
 def assess_risk(drone):
     pos = drone.get('droneData', {}).get('location', {})
     lat, lng = pos.get('lat'), pos.get('lng')
@@ -42,8 +69,17 @@ def assess_risk(drone):
 
     dist_to_zone, zone_name = airspace.get_distance_to_closest_zone_3d(lat, lng, alt)
 
+    history = drone.get('history', [])
+    trend = get_proximity_trend(history, alt)
+    heading = get_heading(history)
+    speed = get_speed(history)
+
+    prediction_result = check_prediction(lat, lng, heading, speed, alt)
+
     if dist_to_zone == 0:
         status, reason = "🔴 CRITICAL", f"BREACH: {zone_name}"
+    elif "PREDICTED BREACH" in prediction_result:
+        status, reason = "🟣 PREDICTIVE", prediction_result
     elif dist_to_zone < 500:
         status, reason = "🟡 WARNING", f"Near {zone_name}"
     elif alt > 60:
@@ -51,8 +87,4 @@ def assess_risk(drone):
     else:
         status, reason = "🟢 CLEAR", "Normal Ops"
 
-    history = drone.get('history', [])
-    trend = get_proximity_trend(history, alt)
-    heading = get_heading(history)
-
-    return status, dist_to_zone, trend, heading, alt, reason, zone_name
+    return status, dist_to_zone, trend, heading, alt, reason, zone_name, speed
