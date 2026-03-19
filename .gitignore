@@ -12,3 +12,7 @@ env/
 __pycache__/
 *.pyc
 requirements.txt.tmp
+
+# Machine Learning Artifacts
+*.npy
+*.npz

@@ -5,3 +5,5 @@ streamlit
 shapely
 streamlit-autorefresh
 pydeck
+numpy
+tensorflow
