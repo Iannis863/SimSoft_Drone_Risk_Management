@@ -1,56 +1,90 @@
 import math
-from ai_predictor import AIDronePredictor
-from airspace_manager import AirspaceManager  # Assuming this is your class name
-from training_utils import get_heading
+from airspace_manager import AirspaceManager
+from predictor import project_future_position
 
-# Initialize AI and Airspace once
-drone_ai = AIDronePredictor('drone_model.h5')
 airspace = AirspaceManager()
 
 
-def assess_risk(d, history):
-    """
-    Returns: status, dist, trend, hdg, alt, reason, zone, speed, ai_path
-    """
-    # 1. Basic Data Extraction
-    drone_data = d.get('droneData', {})
-    loc = drone_data.get('location', {})
-    lat = loc.get('lat', 0)
-    lng = loc.get('lng', 0)
-    alt = drone_data.get('altitudes', {}).get('agl', 0)
-    speed = drone_data.get('groundSpeed', 0)
-    v_speed = drone_data.get('verticalSpeed', 0)
-    hdg = get_heading(history)
+def get_heading(history):
+    if len(history) < 2: return 0
+    p1, p2 = history[-2], history[-1]
+    lat1, lon1 = math.radians(p1['lat']), math.radians(p1['lng'])
+    lat2, lon2 = math.radians(p2['lat']), math.radians(p2['lng'])
+    y = math.sin(lon2 - lon1) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360
 
-    # 2. Current Status Check
-    dist, zone_name = airspace.get_distance_to_closest_zone_3d(lat, lng, alt)
 
-    status = "🟢 SAFE"
-    reason = "Normal flight"
-    ai_path = None
+def get_proximity_trend(history, current_alt):
+    if current_alt <= 0:
+        return "🛑 STATIONARY"
 
-    if dist == 0:
-        status = "🔴 CRITICAL BREACH"
-        reason = f"Inside {zone_name}"
+    if len(history) < 10:  # Need enough data points for a stable trend
+        return "STABLE"
 
-    # 3. AI Predictive Analysis (The "Sleek" Move)
-    elif len(history) >= 10:
-        ai_path = drone_ai.predict_path(history)
-        if ai_path is not None:
-            for i, point in enumerate(ai_path):
-                f_lat, f_lng, f_alt = point
-                f_dist, f_zone = airspace.get_distance_to_closest_zone_3d(f_lat, f_lng, f_alt)
+    # Compare current distance vs distance 10 points ago
+    current_pos = history[-1]
+    past_pos = history[-10]
 
-                if f_dist < 50:
-                    status = "🟣 PREDICTIVE"
-                    seconds = i + 1
-                    reason = f"Collision with {f_zone} in ~{seconds}s"
-                    break
+    current_dist = airspace.get_distance_to_closest_zone_3d(current_pos['lat'], current_pos['lng'], current_alt)[0]
+    past_dist = airspace.get_distance_to_closest_zone_3d(past_pos['lat'], past_pos['lng'], current_alt)[0]
 
-    # 4. Proximity Warning Fallback
-    if status == "🟢 SAFE" and dist < 300:
-        status = "🟡 WARNING"
-        reason = f"Close to {zone_name}"
+    diff = current_dist - past_dist
 
-    # Return 9-tuple for radar.py
-    return status, dist, "STABLE", hdg, alt, reason, zone_name, speed, ai_path
+    if diff < -5: return "🔻 CLOSING"  # Distance is decreasing
+    if diff > 5:  return "🔹 RECEDING"  # Distance is increasing
+    return "↔️ HOVERING"
+
+
+def get_speed(history):
+    """Calculates horizontal speed in meters per second."""
+    if len(history) < 2: return 0.0
+    p1, p2 = history[-2], history[-1]
+
+    # Reuse your distance logic (approx 111139 meters per degree)
+    lat_dist = (p2['lat'] - p1['lat']) * 111139
+    lng_dist = (p2['lng'] - p1['lng']) * 111139 * math.cos(math.radians(p1['lat']))
+
+    dist_m = math.sqrt(lat_dist ** 2 + lng_dist ** 2)
+    return dist_m
+
+
+def check_prediction(lat, lng, heading, speed, alt):
+    """Checks if the projected path intersects a restricted zone."""
+    if speed < 1.0: return "SAFE"
+
+    fut_lat, fut_lng = project_future_position(lat, lng, heading, speed, seconds_ahead=20)
+
+    dist_at_t20, zone_name = airspace.get_distance_to_closest_zone_3d(fut_lat, fut_lng, alt)
+
+    if dist_at_t20 == 0:
+        return f"PREDICTED BREACH: {zone_name} in 20s"
+    return "SAFE"
+
+
+def assess_risk(drone):
+    pos = drone.get('droneData', {}).get('location', {})
+    lat, lng = pos.get('lat'), pos.get('lng')
+    alt = drone.get('droneData', {}).get('altitudes', {}).get('agl', 0) or 0
+
+    dist_to_zone, zone_name = airspace.get_distance_to_closest_zone_3d(lat, lng, alt)
+
+    history = drone.get('history', [])
+    trend = get_proximity_trend(history, alt)
+    heading = get_heading(history)
+    speed = get_speed(history)
+
+    prediction_result = check_prediction(lat, lng, heading, speed, alt)
+
+    if dist_to_zone == 0:
+        status, reason = "🔴 CRITICAL", f"BREACH: {zone_name}"
+    elif "PREDICTED BREACH" in prediction_result:
+        status, reason = "🟣 PREDICTIVE", prediction_result
+    elif dist_to_zone < 500:
+        status, reason = "🟡 WARNING", f"Near {zone_name}"
+    elif alt > 60:
+        status, reason = "🟡 WARNING", "Altitude Violation"
+    else:
+        status, reason = "🟢 CLEAR", "Normal Ops"
+
+    return status, dist_to_zone, trend, heading, alt, reason, zone_name, speed
