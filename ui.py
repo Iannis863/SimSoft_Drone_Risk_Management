@@ -120,6 +120,14 @@ with tab_live:
                 st.markdown(f"<div class='critical-box'><b>{d['Drone ID']}</b><br>{d['Reasons']}</div>",
                             unsafe_allow_html=True)
                 shown_any = True
+            elif "PREDICTIVE" in status:
+                st.markdown(
+                    f"""<div style='padding: 12px; border-radius: 12px; 
+                                                background: rgba(128, 0, 128, 0.15); border-left: 6px solid #800080; 
+                                                margin-bottom: 10px; color: white;'>
+                                                <b>{d['Drone ID']} (AI INTERCEPT)</b><br>{d['Reasons']}</div>""",
+                    unsafe_allow_html=True)
+
             elif "WARNING" in status:
                 st.markdown(f"<div class='warning-box'><b>{d['Drone ID']}</b><br>{d['Reasons']}</div>",
                             unsafe_allow_html=True)
@@ -144,10 +152,13 @@ with tab_live:
 
         # Drone history trails
         path_data = []
+        predicted_path_data = []
+
         for d in drones:
             history = d.get("raw", {}).get("history", [])
             if history:
-                coords = [[p['lng'], p['lat']] for p in history if p.get("lat") is not None and p.get("lng") is not None]
+                coords = [[p['lng'], p['lat']] for p in history if
+                          p.get("lat") is not None and p.get("lng") is not None]
                 if d.get("Longitude") is not None and d.get("Latitude") is not None:
                     coords.append([d['Longitude'], d['Latitude']])
                 if len(coords) >= 2:
@@ -155,6 +166,15 @@ with tab_live:
                         "path": coords,
                         "color": get_status_color(d["Status"])
                     })
+
+            pred_path = d.get("predicted_path", [])
+            if pred_path and len(pred_path) >= 2:
+                full_pred_path = [[d["Longitude"], d["Latitude"]]] + pred_path
+                predicted_path_data.append({
+                    "path": full_pred_path,
+                    "color": [255, 0, 255, 220],
+                    "Drone ID": d["Drone ID"]
+                })
 
         # Pilot -> Drone dotted connection lines
         pilot_link_data = []
@@ -219,6 +239,7 @@ with tab_live:
                 })
 
         layers = [
+
             # Drone history path
             pdk.Layer(
                 "PathLayer",
@@ -229,6 +250,17 @@ with tab_live:
                 dash_array=[6, 4],
                 cap_rounded=True,
                 pickable=False
+            ),
+
+            # AI predicted future path
+            pdk.Layer(
+                "PathLayer",
+                data=predicted_path_data,
+                get_path="path",
+                get_color="color",
+                width_min_pixels=3,
+                cap_rounded=True,
+                pickable=True
             ),
 
             # Pilot -> drone dotted lines
@@ -336,20 +368,35 @@ with tab_live:
 
         tooltip = {
             "html": """
-                <div style='font-family: sans-serif;'>
-                    <b>Drone ID:</b> {Drone ID}<br/>
-                    <b>Status:</b> {Status}<br/>
-                    <b>Altitude:</b> {Altitude AGL} m<br/>
-                    <b>Heading:</b> {Heading (°)}°<br/>
-                    <b>Pilot ID:</b> {Pilot ID}
-                </div>
-            """,
+                        <div style='font-family: sans-serif; line-height: 1.5;'>
+                            <div style='display: {Drone ID ? "block" : "none"};'>
+                                <b style='font-size: 14px; color: #00d1ff;'>Drone: {Drone ID}</b><br/>
+                                <hr style='margin: 5px 0; border: 0; border-top: 1px solid #444;'>
+                                <b>Status:</b> {Status}<br/>
+                                <b>Zone:</b> {Zone}<br/>
+                                <b>Alert:</b> <span style='color: #ffcc00;'>{Reasons}</span><br/>
+                                <b>Altitude:</b> {Altitude AGL} m<br/>
+                                <b>Pilot ID:</b> {Pilot ID}
+                            </div>
+
+                            <div style='display: {zone_id ? "block" : "none"};'>
+                                <b style='font-size: 14px; color: #ff4b4b;'>Restricted Zone: {zone_id}</b><br/>
+                                <hr style='margin: 5px 0; border: 0; border-top: 1px solid #444;'>
+                                <b>Min Alt:</b> {min_alt}<br/>
+                                <b>Max Alt:</b> {max_alt}
+                            </div>
+                        </div>
+                    """,
             "style": {
-                "backgroundColor": "rgba(20,20,20,0.9)",
+                "backgroundColor": "rgba(20,20,20,0.95)",
                 "color": "white",
                 "borderRadius": "8px",
-                "padding": "10px"
+                "padding": "12px",
+                "border": "1px solid #555",
+                "boxShadow": "0px 4px 15px rgba(0,0,0,0.5)",
+                "zIndex": "10000"
             }
+
         }
 
         st.pydeck_chart(
@@ -367,7 +414,7 @@ with tab_live:
     if drones:
         df_display = pd.DataFrame(drones).drop(columns=['raw'])
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-
+    #st.write("Predicted path lengths:", [len(d.get("predicted_path", [])) for d in drones])
 # -----------------------------
 # Archive Logic
 # -----------------------------
