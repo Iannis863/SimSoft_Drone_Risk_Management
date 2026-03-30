@@ -5,7 +5,7 @@ def normalize_sequence(history):
     Converts a list of history points into a normalized
     numpy array for the AI model.
     """
-    if len(history) < 10: return None
+    if len(history) < 10: return None, None
 
     # Take the last 10 points
     coords = np.array([[p['lat'], p['lng'], p.get('alt', 0)] for p in history[-10:]])
