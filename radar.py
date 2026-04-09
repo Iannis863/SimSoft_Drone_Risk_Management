@@ -147,71 +147,59 @@ def build_heading_arrow_polygon(lat, lng, heading_deg, alt, tip_m=180, width_m=1
 
     return [tip, left_base, tail, right_base, tip]
 
+
 def generate_synthetic_data():
     """Generates artificial drones with the same schema as the live API."""
     synthetic_drones = []
-    base_lat, base_lng = 46.7700, 23.6000  # Cluj-Napoca
+    base_lat, base_lng = 46.7700, 23.6000
 
     for i in range(3):
         sn = f"TEST-DRONE-{i:03d}"
+        # Random starting point
         lat = base_lat + random.uniform(-0.03, 0.03)
         lng = base_lng + random.uniform(-0.03, 0.03)
 
-        pilot_lat = lat + random.uniform(-0.01, 0.01)
-        pilot_lng = lng + random.uniform(-0.01, 0.01)
-
         speed = random.choice([5, 12, 25, 40])
-        heading = random.uniform(0, 360)
+        heading = random.uniform(0, 360)  # 0 = North, 90 = East
         altitude = random.randint(40, 200)
+
+        # 1. 🛠️ FIX: BUILD 3D HISTORY (Include Altitude)
         history = []
         for step in range(10, 0, -1):
+            # Aviation/Compass Math:
+            # Lat uses Cos(Heading), Lng uses Sin(Heading)
+            h_lat = lat - step * 0.0001 * math.cos(math.radians(heading))
+            h_lng = lng - step * 0.0001 * math.sin(math.radians(heading))
+
             history.append({
-                "lat": lat - step * 0.0008 * math.cos(math.radians(heading)),
-                "lng": lng - step * 0.0008 * math.sin(math.radians(heading))
+                "lat": h_lat,
+                "lng": h_lng,
+                "alt": altitude  # 👈 Added 'alt' for 3D history continuity
             })
+
         synthetic_drones.append({
             "id": 10000 + i,
-            "trackId": f"track-{i}",
             "serial": sn,
             "droneId": f"ALPHA-{i}",
             "pilotId": f"PILOT-{random.randint(100, 999)}",
-            "manufacturer": "DJI",
-            "model": "Synthetic",
             "history": history,
             "droneData": {
                 "location": {"lat": lat, "lng": lng},
-                "altitudes": {
-                    "agl": altitude,
-                    "ato": altitude,
-                    "amsl": None,
-                    "geodetic": altitude + 120
-                },
+                "altitudes": {"agl": altitude},
                 "groundSpeed": speed,
-                "verticalSpeed": random.choice([-2, 0, 3]),
-                "orientation": heading,   # IMPORTANT: orientation, not heading
-                "likelihood": None,
-                "uncertainty": None,
-                "state": {
-                    "id": 2,
-                    "name": "Airborne"
-                }
+                "verticalSpeed": 0,
+                # 2. 🛠️ FIX: Consistency (Matches build_prediction_history)
+                "orientation": heading,
+                "heading": heading,  # 👈 Added as fallback
+                "state": {"id": 2, "name": "Airborne"}
             },
             "pilotData": {
-                "id": 20000 + i,
                 "location": {
-                    "lat": pilot_lat,
-                    "lng": pilot_lng
-                },
-                "likelihood": None,
-                "uncertainty": None
-            },
-            "timestamp": {
-                "date": time.strftime("%Y-%m-%d %H:%M:%S.000000"),
-                "timezone_type": 3,
-                "timezone": "Europe/Bucharest"
+                    "lat": lat + 0.005,
+                    "lng": lng + 0.005
+                }
             }
         })
-
     return synthetic_drones
 
 

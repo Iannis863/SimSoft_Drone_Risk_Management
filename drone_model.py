@@ -3,13 +3,15 @@ from tensorflow.keras import layers, models
 
 def build_drone_predictor():
     model = models.Sequential([
-        layers.Input(shape=(10, 6)),
+        layers.Input(shape=(10, 8)),
+        layers.LSTM(128, return_sequences=False),
+        layers.RepeatVector(10),
+        layers.LSTM(128, return_sequences=True),
         layers.LSTM(64, return_sequences=True),
-        layers.Dropout(0.2),
-        layers.LSTM(32, return_sequences=True),
-        layers.TimeDistributed(layers.Dense(3)),
+        layers.TimeDistributed(layers.Dense(64, activation='relu')),
+        layers.TimeDistributed(layers.Dense(3))
     ])
-    model.compile(optimizer='adam', loss='mse')
+    model.compile(optimizer='adam', loss='huber')
     return model
 
 

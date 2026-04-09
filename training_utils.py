@@ -2,44 +2,51 @@ import numpy as np
 
 
 def normalize_sequence(history):
-    """
-    Converts a list of history points into a 6-feature normalized
-    numpy array for the AI model.
-    """
-    if len(history) < 10: return None, None
+    if len(history) < 10: return None, None, None
 
-    # 1. Establish the 3D origin for denormalization later
-    last_point = history[-1]
-    last_alt = last_point.get('droneData', {}).get('altitudes', {}).get('agl', 0)
-    origin = np.array([last_point['lat'], last_point['lng'], last_alt])
+    last_p = history[-1]
+    last_d = last_p.get('droneData', {})
 
-    # 2. Build the 6-column feature set
+    origin = np.array([last_p['lat'], last_p['lng'], last_d.get('altitudes', {}).get('agl', 0)])
+    origin_heading = last_p.get('heading') if last_p.get('heading') is not None else last_d.get('heading', 0)
+
     seq = []
-    for p in history[-10:]:
-        d_data = p.get('droneData', {})
+    prev_hdg = None
 
-        # Feature 1 & 2: Relative Lat/Lng
-        lat_rel = p['lat'] - origin[0]
-        lng_rel = p['lng'] - origin[1]
+    theta = np.radians(origin_heading)
+    c, s = np.cos(theta), np.sin(theta)
 
-        # Feature 3: Altitude
-        alt = d_data.get('altitudes', {}).get('agl', 0)
+    for i, p in enumerate(history[-10:]):
+        d = p.get('droneData', {})
 
-        # Feature 4: Ground Speed
-        gs = d_data.get('groundSpeed', 0)
+        lat_rel = (p['lat'] - origin[0]) * 111139
+        lng_rel = (p['lng'] - origin[1]) * 77000
 
-        # Feature 5: Vertical Speed
-        vs = d_data.get('verticalSpeed', 0)
+        local_lng = lng_rel * c - lat_rel * s
+        local_lat = lng_rel * s + lat_rel * c
 
-        # Feature 6: Heading (check root or nested)
-        hdg = p.get('heading') if p.get('heading') is not None else d_data.get('heading', 0)
+        alt_abs = d.get('altitudes', {}).get('agl', 0)
+        alt_rel = alt_abs - origin[2]
 
-        seq.append([lat_rel, lng_rel, alt, gs, vs, hdg])
+        hdg = p.get('heading') if p.get('heading') is not None else d.get('heading', 0)
 
-    relative_coords = np.array(seq, dtype=np.float32)
+        rel_hdg = (hdg - origin_heading) % 360
+        hdg_rad = np.radians(rel_hdg)
+        hdg_sin = np.sin(hdg_rad)
+        hdg_cos = np.cos(hdg_rad)
 
-    # 3. Scaling (Matches your training logic)
-    relative_coords[:, 0] *= 111139  # Lat to Meters
-    relative_coords[:, 1] *= 77000  # Lng to Meters
+        if prev_hdg is None:
+            turn_rate = 0.0
+        else:
+            diff = hdg - prev_hdg
+            diff = (diff + 180) % 360 - 180
+            turn_rate = diff / 180.0
 
-    return relative_coords, origin
+        prev_hdg = hdg
+
+        gs = d.get('groundSpeed', 0) / 30.0
+        vs = d.get('verticalSpeed', 0) / 10.0
+
+        seq.append([local_lat, local_lng, alt_rel, hdg_sin, hdg_cos, turn_rate, gs, vs])
+
+    return np.array(seq, dtype=np.float32), origin, origin_heading
